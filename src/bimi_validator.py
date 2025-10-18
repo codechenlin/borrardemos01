@@ -1,0 +1,50 @@
+import dns.resolver
+from src.utils import parse_kv
+
+def _get_txt(name: str):
+    try:
+        ans = dns.resolver.resolve(name, "TXT")
+        return "".join([s.decode() for s in ans[0].strings])
+    except Exception:
+        return None
+
+def check_bimi_record(domain: str) -> dict:
+    result = {"exists": False, "syntax_ok": False, "raw": None, "parts": {}}
+    name = f"default._bimi.{domain}"
+    raw = _get_txt(name)
+    if not raw:
+        result["message"] = "No se encontró registro BIMI TXT"
+        return result
+    result["exists"] = True
+    result["raw"] = raw
+    parts = parse_kv(raw)
+    result["parts"] = parts
+    v_ok = parts.get("v") == "BIMI1"
+    l_ok = bool(parts.get("l"))
+    result["syntax_ok"] = v_ok and l_ok
+    if not v_ok:
+        result["message"] = "Campo v debe ser BIMI1"
+    if not l_ok:
+        result["message"] = "Campo l (logo) faltante o vacío"
+    return result
+
+def check_dmarc(domain: str) -> dict:
+    result = {"dmarc_exists": False, "dmarc_enforced": False, "dmarc_policy": None}
+    name = f"_dmarc.{domain}"
+    raw = _get_txt(name)
+    if not raw:
+        result["dmarc_message"] = "No se encontró registro DMARC"
+        return result
+    result["dmarc_exists"] = True
+    result["dmarc_raw"] = raw
+    policy = "none"
+    for kv in raw.split(";"):
+        kv = kv.strip()
+        if kv.startswith("p="):
+            policy = kv.split("=", 1)[1].strip()
+            break
+    result["dmarc_policy"] = policy
+    result["dmarc_enforced"] = policy in ("quarantine", "reject")
+    if not result["dmarc_enforced"]:
+        result["dmarc_message"] = "DMARC debe estar en quarantine o reject para BIMI"
+    return result
