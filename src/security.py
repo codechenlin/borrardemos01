@@ -2,15 +2,20 @@ import os
 from functools import wraps
 from flask import request, jsonify
 
-API_KEY = os.environ.get("API_KEY", "")
 ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "*")
 
 def require_api_key(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        key = request.headers.get("X-API-KEY", "")
-        if not API_KEY or key != API_KEY:
+        expected_key = os.environ.get("API_KEY", "").strip()
+        provided_key = request.headers.get("X-API-KEY", "").strip()
+
+        if not expected_key:
+            return jsonify({"error": "API_KEY no está configurada en el servidor"}), 500
+
+        if provided_key != expected_key:
             return jsonify({"error": "Unauthorized"}), 401
+
         return f(*args, **kwargs)
     return decorated
 
