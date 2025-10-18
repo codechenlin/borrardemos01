@@ -11,9 +11,8 @@ import os
 
 app = Flask(__name__)
 
-@app.before_first_request
-def setup():
-    init_db()
+# Inicializar base de datos al arranque (Flask 3 ya no soporta before_first_request)
+init_db()
 
 @app.after_request
 def add_cors(response):
