@@ -9,11 +9,16 @@ TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", "15"))
 OCSP_TIMEOUT = int(os.environ.get("OCSP_TIMEOUT", "10"))
 CRL_TIMEOUT = int(os.environ.get("CRL_TIMEOUT", "10"))
 
+DEFAULT_HEADERS = {
+    "User-Agent": "BIMI-VMC-Validator/1.0 (+https://example.com)",
+    "Accept": "*/*"
+}
+
 def _now():
     return datetime.datetime.utcnow()
 
 def _download(url: str, timeout: int):
-    r = requests.get(url, timeout=timeout)
+    r = requests.get(url, timeout=timeout, headers=DEFAULT_HEADERS, allow_redirects=True)
     r.raise_for_status()
     return r.content
 
@@ -124,7 +129,7 @@ def _extract_logo_hash(cert: x509.Certificate):
                 return {"oid": ext.oid.dotted_string, "raw_sha256": hashlib.sha256(data).hexdigest()}
     return None
 
-def check_vmc(vmc_url: str, svg_url: str | None) -> dict:
+def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
     out = {
         "exists": False,
         "authentic": False,
@@ -142,14 +147,35 @@ def check_vmc(vmc_url: str, svg_url: str | None) -> dict:
         "vmc_logo_hash_present": False,
         "logo_hash_match": None,
         "message": None,
-        "retry_suggestion": None
+        "retry_suggestion": None,
+        "source_url": vmc_url
     }
+
+    if not vmc_url:
+        out["message"] = "El dominio no incluye VMC (no hay campo a= en el registro BIMI)"
+        return out
+
     parsed = urlparse(vmc_url)
     if parsed.scheme != "https":
         out["message"] = "El certificado VMC debe servirse por HTTPS"
         return out
+
     try:
         pem = _download(vmc_url, TIMEOUT)
+    except requests.HTTPError as e:
+        out["message"] = f"No se pudo descargar el VMC desde la URL indicada (HTTP {e.response.status_code})"
+        return out
+    except requests.Timeout:
+        out["message"] = "No se pudo descargar el VMC desde la URL indicada (timeout)"
+        return out
+    except requests.RequestException:
+        out["message"] = "No se pudo descargar el VMC desde la URL indicada (error de red o bloqueado)"
+        return out
+    except Exception as e:
+        out["message"] = f"No se pudo descargar el VMC desde la URL indicada (error: {e})"
+        return out
+
+    try:
         leaf = _load_pem_cert(pem)
         out["exists"] = True
         out["subject"] = leaf.subject.rfc4514_string()
@@ -222,5 +248,5 @@ def check_vmc(vmc_url: str, svg_url: str | None) -> dict:
 
         return out
     except Exception as e:
-        out["message"] = f"Error al obtener/parsing VMC: {e}"
+        out["message"] = f"Error al parsear el VMC: {e}"
         return out
