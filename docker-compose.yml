@@ -1,0 +1,21 @@
+version: "3.8"
+services:
+  bimi-api:
+    build: .
+    container_name: bimi-api
+    ports:
+      - "8080:8080"
+    environment:
+      - API_KEY=${API_KEY}
+      - ALLOWED_ORIGIN=${ALLOWED_ORIGIN}
+      - TRUST_STORE=/etc/ssl/certs/ca-certificates.crt
+      - REQUEST_TIMEOUT=15
+      - OCSP_TIMEOUT=10
+      - CRL_TIMEOUT=10
+      - RETENTION_DAYS=${RETENTION_DAYS:-2}
+    volumes:
+      - bimi_api_data:/app/data
+    restart: always
+
+volumes:
+  bimi_api_data:
