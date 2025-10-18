@@ -5,6 +5,10 @@ import os
 import hashlib
 
 TIMEOUT = int(os.environ.get("REQUEST_TIMEOUT", "15"))
+DEFAULT_HEADERS = {
+    "User-Agent": "BIMI-VMC-Validator/1.0 (+https://example.com)",
+    "Accept": "image/svg+xml,*/*"
+}
 
 def svg_sha256(svg_bytes: bytes) -> str:
     return hashlib.sha256(svg_bytes).hexdigest()
@@ -16,7 +20,7 @@ def check_svg(svg_url: str) -> dict:
         out["message"] = "El logo debe servirse por HTTPS"
         return out
     try:
-        r = requests.get(svg_url, timeout=TIMEOUT)
+        r = requests.get(svg_url, timeout=TIMEOUT, headers=DEFAULT_HEADERS, allow_redirects=True)
         r.raise_for_status()
         content = r.content
         out["exists"] = True
