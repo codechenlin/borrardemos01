@@ -3,8 +3,6 @@ services:
   bimi-api:
     build: .
     container_name: bimi-api
-    ports:
-      - "8080:8080"
     environment:
       - API_KEY=${API_KEY}
       - ALLOWED_ORIGIN=${ALLOWED_ORIGIN}
