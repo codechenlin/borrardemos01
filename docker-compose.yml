@@ -14,6 +14,11 @@ services:
     volumes:
       - bimi_api_data:/app/data
     restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 volumes:
   bimi_api_data:
