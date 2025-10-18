@@ -16,9 +16,10 @@ services:
     restart: always
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+      interval: 60s        # cada 60 segundos
+      timeout: 20s         # espera hasta 20 segundos por respuesta
+      retries: 5           # permite hasta 5 intentos fallidos
+      start_period: 60s    # espera 60s antes de empezar a chequear (tiempo de arranque)
 
 volumes:
   bimi_api_data:
