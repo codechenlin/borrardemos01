@@ -308,6 +308,38 @@ def _verify_with_openssl(vmc_bytes: bytes) -> dict:
         out["detail"] = str(e)
         return out
 
+def check_vmc_oids(pem_bytes: bytes) -> dict:
+    """
+    Verifica que el certificado VMC contenga los OIDs requeridos.
+    Ejemplo: 1.3.6.1.4.1.53087.1.13 = Registered Mark
+    """
+    out = {
+        "oids_present": [],
+        "registered_mark_oid_ok": False,
+        "message": None
+    }
+
+    try:
+        cert = x509.load_pem_x509_certificate(pem_bytes, default_backend())
+        subject = cert.subject
+
+        # Recorremos todos los atributos del Subject
+        for attr in subject:
+            oid = attr.oid.dotted_string
+            out["oids_present"].append(oid)
+            if oid == "1.3.6.1.4.1.53087.1.13":
+                out["registered_mark_oid_ok"] = True
+
+        if out["registered_mark_oid_ok"]:
+            out["message"] = "El certificado contiene el OID Registered Mark (1.3.6.1.4.1.53087.1.13)"
+        else:
+            out["message"] = "El certificado NO contiene el OID Registered Mark requerido para VMC"
+
+    except Exception as e:
+        out["message"] = f"Error al analizar OIDs: {e}"
+
+    return out
+
 def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
     out = {
         "exists": False,
@@ -330,7 +362,15 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
         "source_url": vmc_url,
         "openssl": {"status": "not_run"}   # 👈 añadido desde el inicio
     }
+    
+    # ... aquí tu lógica para descargar el VMC y cargarlo en pem_bytes ...
 
+    # Validación con OpenSSL
+    out["openssl"] = _verify_with_openssl(pem_bytes)
+
+    # 👇 Añadido: verificación de OIDs
+    out["oids"] = check_vmc_oids(pem_bytes)
+    
     if not vmc_url:
         out["message"] = "El dominio no incluye VMC (no hay campo a= en el registro BIMI)"
         return out
