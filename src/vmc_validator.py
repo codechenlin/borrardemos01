@@ -56,7 +56,7 @@ def _get_crl_urls(cert: x509.Certificate):
 
 def _validate_times(cert: x509.Certificate):
     now = _now()
-    return cert.not_valid_before <= now <= cert.not_valid_after
+    return cert.not_valid_before_utc <= now <= cert.not_valid_after_utc
 
 def _download_issuer_and_save(leaf_cert: x509.Certificate) -> str | None:
     issuers, _ = _get_aia_urls(leaf_cert)
