@@ -215,4 +215,79 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
         out["issuer"] = leaf.issuer.rfc4514_string()
         out["valid_from"] = leaf.not_valid_before.isoformat()
         out["valid_to"] = leaf.not_valid_after.isoformat()
-        out["valid_now"] = _validate_times
+                out["valid_now"] = _validate_times(leaf)
+
+        chain, ocsp_urls, has_issuer = _try_build_chain(leaf)
+        out["chain_ok"] = has_issuer
+
+        ocsp_ok = None
+        if has_issuer and ocsp_urls:
+            for url in ocsp_urls:
+                ok, status = _ocsp_check(leaf, chain[1], url)
+                out["ocsp_status"] = status
+                if status in ("ocsp_timeout", "ocsp_network_error", "ocsp_unavailable"):
+                    out["ocsp_detail"] = "Problema con el servidor OCSP de la CA (caído, lento o bloqueado)"
+                    out["retry_suggestion"] = {"retry_after_seconds": 60, "max_retries": 3}
+                ocsp_ok = ok
+                if ok is True or ok is False:
+                    break
+        elif has_issuer and not ocsp_urls:
+            out["ocsp_status"] = "ocsp_not_provided"
+
+        crl_ok = None
+        if has_issuer and (ocsp_ok is None or ocsp_ok is False):
+            crl_ok, status = _crl_check(leaf, chain[1])
+            out["crl_status"] = status
+            if status in ("crl_timeout", "crl_network_error", "crl_fetch_error", "crl_not_present"):
+                out["crl_detail"] = "No es posible descargar lista CRL de la CA (no presente o inaccesible)"
+                if not out.get("retry_suggestion"):
+                    out["retry_suggestion"] = {"retry_after_seconds": 120, "max_retries": 2}
+
+        if ocsp_ok is True or crl_ok is True:
+            out["revocation_ok"] = True
+        elif ocsp_ok is False or crl_ok is False:
+            out["revocation_ok"] = False
+        else:
+            out["revocation_ok"] = None
+
+        logo_hash_info = _extract_logo_hash(leaf)
+        out["vmc_logo_hash_present"] = bool(logo_hash_info)
+
+        if svg_url:
+            try:
+                svg_bytes = _download(svg_url, TIMEOUT)
+                svg_sha = hashlib.sha256(svg_bytes).hexdigest()
+                if logo_hash_info and logo_hash_info.get("raw_sha256"):
+                    out["logo_hash_match"] = (svg_sha == logo_hash_info["raw_sha256"])
+                else:
+                    out["logo_hash_match"] = None
+            except Exception:
+                out["logo_hash_match"] = None
+
+        out["authentic"] = (out["valid_now"] and out["chain_ok"] and out["revocation_ok"] is True)
+
+        if out["revocation_ok"] is None:
+            out["message"] = "Revocación indeterminada por indisponibilidad OCSP/CRL de la CA"
+        elif out["revocation_ok"] is False:
+            out["message"] = "Certificado VMC marcado como revocado por OCSP/CRL"
+        elif not out["valid_now"]:
+            out["message"] = "Certificado VMC fuera de vigencia"
+        elif not out["chain_ok"]:
+            out["message"] = "No se pudo construir la cadena hasta el emisor"
+        elif out["authentic"]:
+            out["message"] = "VMC autenticado con cadena y verificación de revocación"
+        else:
+            out["message"] = "VMC no autenticado por condiciones no cumplidas"
+
+        # --- Añadir bloque de verificación con OpenSSL ---
+        try:
+            out["openssl"] = _verify_with_openssl(pem)
+        except Exception as e:
+            out["openssl"] = {"status": "error", "detail": str(e)}
+
+        return out
+
+    except Exception as e:
+        out["message"] = f"Error al parsear el VMC: {e}"
+        return out
+
