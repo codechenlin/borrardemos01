@@ -212,4 +212,4 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
         leaf = _load_pem_cert(pem)
         out["exists"] = True
         out["subject"] = leaf.subject.rfc4514_string()
-        out["issuer"] = leaf.issuer.rfc
+        out["issuer"] = leaf.issuer.rfc4514_string()
