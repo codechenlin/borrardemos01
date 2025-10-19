@@ -279,10 +279,10 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
         else:
             out["message"] = "VMC no autenticado por condiciones no cumplidas"
 
-        # --- Añadir bloque de verificación con OpenSSL ---
+                # --- Añadir bloque de verificación con OpenSSL ---
         try:
             out["openssl"] = _verify_with_openssl(pem)
-    except Exception as e:
+        except Exception as e:
             out["openssl"] = {"status": "error", "detail": str(e)}
 
         return out
