@@ -132,32 +132,55 @@ def _extract_logo_hash(cert: x509.Certificate):
 # --- NUEVO: verificación con OpenSSL ---
 def _verify_with_openssl(pem_bytes: bytes) -> dict:
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as f:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".vmc") as f:
             f.write(pem_bytes)
             f.flush()
             cert_path = f.name
 
-        # Dump de info básica
+        # --- Intento 1: tratar como X.509 directo ---
         proc_info = subprocess.run(
             ["openssl", "x509", "-in", cert_path, "-text", "-noout"],
             capture_output=True, text=True, timeout=15
         )
-        info_text = proc_info.stdout
+        if proc_info.returncode == 0 and proc_info.stdout:
+            # Verificación de cadena
+            proc_chain = subprocess.run(
+                ["openssl", "verify", cert_path],
+                capture_output=True, text=True, timeout=15
+            )
+            chain_ok = "OK" in proc_chain.stdout
+            return {
+                "status": "pass" if chain_ok else "fail",
+                "x509_text_sample": proc_info.stdout[:1000],
+                "chain_stdout": proc_chain.stdout.strip(),
+                "chain_stderr": proc_chain.stderr.strip()
+            }
 
-        # Verificación de cadena (usando almacén del sistema)
-        proc_chain = subprocess.run(
-            ["openssl", "verify", cert_path],
+        # --- Intento 2: tratar como PKCS#7 (DER) ---
+        proc_extract = subprocess.run(
+            ["openssl", "pkcs7", "-in", cert_path, "-inform", "DER", "-print_certs"],
             capture_output=True, text=True, timeout=15
         )
+        if proc_extract.returncode == 0 and proc_extract.stdout:
+            # Tomamos el primer cert extraído
+            proc_info = subprocess.run(
+                ["openssl", "x509", "-text", "-noout"],
+                input=proc_extract.stdout, capture_output=True, text=True, timeout=15
+            )
+            proc_chain = subprocess.run(
+                ["openssl", "verify"],
+                input=proc_extract.stdout, capture_output=True, text=True, timeout=15
+            )
+            chain_ok = "OK" in proc_chain.stdout
+            return {
+                "status": "pass" if chain_ok else "fail",
+                "x509_text_sample": proc_info.stdout[:1000],
+                "chain_stdout": proc_chain.stdout.strip(),
+                "chain_stderr": proc_chain.stderr.strip()
+            }
 
-        chain_ok = "OK" in proc_chain.stdout
+        return {"status": "error", "detail": "Formato no reconocido por OpenSSL"}
 
-        return {
-            "status": "pass" if chain_ok else "fail",
-            "x509_text_sample": info_text[:1000],
-            "chain_stdout": proc_chain.stdout.strip(),
-            "chain_stderr": proc_chain.stderr.strip()
-        }
     except Exception as e:
         return {"status": "error", "detail": str(e)}
 
