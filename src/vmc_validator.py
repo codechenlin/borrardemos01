@@ -181,7 +181,7 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
         "message": None,
         "retry_suggestion": None,
         "source_url": vmc_url,
-        "openssl": None   # <-- nuevo bloque
+        "openssl": {"status": "not_run"}   # 👈 añadido desde el inicio
     }
 
     if not vmc_url:
