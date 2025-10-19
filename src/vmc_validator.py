@@ -130,59 +130,159 @@ def _extract_logo_hash(cert: x509.Certificate):
     return None
 
 # --- NUEVO: verificación con OpenSSL ---
-def _verify_with_openssl(pem_bytes: bytes) -> dict:
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".vmc") as f:
-            f.write(pem_bytes)
-            f.flush()
-            cert_path = f.name
+import subprocess
+import tempfile
+import os
 
-        # --- Intento 1: tratar como X.509 directo ---
-        proc_info = subprocess.run(
-            ["openssl", "x509", "-in", cert_path, "-text", "-noout"],
-            capture_output=True, text=True, timeout=15
-        )
-        if proc_info.returncode == 0 and proc_info.stdout:
-            # Verificación de cadena
-            proc_chain = subprocess.run(
-                ["openssl", "verify", cert_path],
+CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"
+
+def _verify_with_openssl(vmc_bytes: bytes) -> dict:
+    """
+    Verificación robusta con OpenSSL para VMC:
+    - Detecta el formato por contenido
+    - Maneja PEM/DER X.509 directo
+    - Intenta PKCS7 y CMS si es necesario
+    - Siempre verifica la cadena con el bundle de CAs del sistema
+    """
+    out = {
+        "status": "error",
+        "format": None,
+        "chain_ok": None,
+        "detail": None,
+        "stdout": None,
+        "stderr": None,
+    }
+
+    # Si lo descargado es HTML (ej. error 404)
+    if vmc_bytes[:64].lstrip().lower().startswith(b"<html"):
+        out["detail"] = "La URL devolvió HTML (404/errores), no un VMC"
+        return out
+
+    # Heurísticas para detectar formato
+    head = vmc_bytes[:128]
+    is_pem_cert = b"-----BEGIN CERTIFICATE-----" in head
+    is_pem_pkcs7 = b"-----BEGIN PKCS7-----" in head or b"-----BEGIN CMS-----" in head
+    looks_der = len(vmc_bytes) > 4 and vmc_bytes[0] == 0x30  # ASN.1 SEQUENCE
+
+    # Guardar en archivo temporal
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".bin") as f:
+        f.write(vmc_bytes)
+        f.flush()
+        vmc_path = f.name
+
+    try:
+        # 1) Intentar PEM X.509 directo
+        if is_pem_cert:
+            out["format"] = "x509_pem"
+            info = subprocess.run(
+                ["openssl", "x509", "-text", "-noout", "-in", vmc_path],
                 capture_output=True, text=True, timeout=15
             )
-            chain_ok = "OK" in proc_chain.stdout
-            return {
-                "status": "pass" if chain_ok else "fail",
-                "x509_text_sample": proc_info.stdout[:1000],
-                "chain_stdout": proc_chain.stdout.strip(),
-                "chain_stderr": proc_chain.stderr.strip()
-            }
+            if info.returncode == 0:
+                verify = subprocess.run(
+                    ["openssl", "verify", "-CAfile", CA_BUNDLE, vmc_path],
+                    capture_output=True, text=True, timeout=15
+                )
+                out["stdout"] = (info.stdout[:500] + "\n---\n" + verify.stdout.strip())
+                out["stderr"] = verify.stderr.strip()
+                out["chain_ok"] = "OK" in verify.stdout
+                out["status"] = "pass" if out["chain_ok"] else "fail"
+                return out
 
-        # --- Intento 2: tratar como PKCS#7 (DER) ---
-        proc_extract = subprocess.run(
-            ["openssl", "pkcs7", "-in", cert_path, "-inform", "DER", "-print_certs"],
-            capture_output=True, text=True, timeout=15
-        )
-        if proc_extract.returncode == 0 and proc_extract.stdout:
-            # Tomamos el primer cert extraído
-            proc_info = subprocess.run(
-                ["openssl", "x509", "-text", "-noout"],
-                input=proc_extract.stdout, capture_output=True, text=True, timeout=15
+        # 2) Intentar DER X.509
+        if looks_der:
+            out["format"] = "x509_der"
+            info = subprocess.run(
+                ["openssl", "x509", "-text", "-noout", "-inform", "DER", "-in", vmc_path],
+                capture_output=True, text=True, timeout=15
             )
-            proc_chain = subprocess.run(
-                ["openssl", "verify"],
-                input=proc_extract.stdout, capture_output=True, text=True, timeout=15
-            )
-            chain_ok = "OK" in proc_chain.stdout
-            return {
-                "status": "pass" if chain_ok else "fail",
-                "x509_text_sample": proc_info.stdout[:1000],
-                "chain_stdout": proc_chain.stdout.strip(),
-                "chain_stderr": proc_chain.stderr.strip()
-            }
+            if info.returncode == 0:
+                verify = subprocess.run(
+                    ["openssl", "verify", "-CAfile", CA_BUNDLE, "-inform", "DER", vmc_path],
+                    capture_output=True, text=True, timeout=15
+                )
+                out["stdout"] = (info.stdout[:500] + "\n---\n" + verify.stdout.strip())
+                out["stderr"] = verify.stderr.strip()
+                out["chain_ok"] = "OK" in verify.stdout
+                out["status"] = "pass" if out["chain_ok"] else "fail"
+                return out
 
-        return {"status": "error", "detail": "Formato no reconocido por OpenSSL"}
+        # 3) Intentar PKCS7 PEM
+        if is_pem_pkcs7:
+            out["format"] = "pkcs7_pem"
+            extract = subprocess.run(
+                ["openssl", "pkcs7", "-in", vmc_path, "-print_certs"],
+                capture_output=True, text=True, timeout=15
+            )
+            if extract.returncode == 0 and "BEGIN CERTIFICATE" in extract.stdout:
+                info = subprocess.run(
+                    ["openssl", "x509", "-text", "-noout"],
+                    input=extract.stdout, capture_output=True, text=True, timeout=15
+                )
+                verify = subprocess.run(
+                    ["openssl", "verify", "-CAfile", CA_BUNDLE],
+                    input=extract.stdout, capture_output=True, text=True, timeout=15
+                )
+                out["stdout"] = (info.stdout[:500] + "\n---\n" + verify.stdout.strip())
+                out["stderr"] = verify.stderr.strip()
+                out["chain_ok"] = "OK" in verify.stdout
+                out["status"] = "pass" if out["chain_ok"] else "fail"
+                return out
+
+        # 4) Intentar PKCS7 DER
+        if looks_der:
+            out["format"] = "pkcs7_der"
+            extract = subprocess.run(
+                ["openssl", "pkcs7", "-in", vmc_path, "-inform", "DER", "-print_certs"],
+                capture_output=True, text=True, timeout=15
+            )
+            if extract.returncode == 0 and "BEGIN CERTIFICATE" in extract.stdout:
+                info = subprocess.run(
+                    ["openssl", "x509", "-text", "-noout"],
+                    input=extract.stdout, capture_output=True, text=True, timeout=15
+                )
+                verify = subprocess.run(
+                    ["openssl", "verify", "-CAfile", CA_BUNDLE],
+                    input=extract.stdout, capture_output=True, text=True, timeout=15
+                )
+                out["stdout"] = (info.stdout[:500] + "\n---\n" + verify.stdout.strip())
+                out["stderr"] = verify.stderr.strip()
+                out["chain_ok"] = "OK" in verify.stdout
+                out["status"] = "pass" if out["chain_ok"] else "fail"
+                return out
+
+        # 5) Intentar CMS DER
+        if looks_der:
+            out["format"] = "cms_der"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as cf:
+                certs_out = cf.name
+            cms = subprocess.run(
+                ["openssl", "cms", "-verify", "-inform", "DER", "-in", vmc_path,
+                 "-noverify", "-certsout", certs_out],
+                capture_output=True, text=True, timeout=15
+            )
+            if cms.returncode == 0 and os.path.getsize(certs_out) > 0:
+                info = subprocess.run(
+                    ["openssl", "x509", "-text", "-noout", "-in", certs_out],
+                    capture_output=True, text=True, timeout=15
+                )
+                verify = subprocess.run(
+                    ["openssl", "verify", "-CAfile", CA_BUNDLE, certs_out],
+                    capture_output=True, text=True, timeout=15
+                )
+                out["stdout"] = (info.stdout[:500] + "\n---\n" + verify.stdout.strip())
+                out["stderr"] = (cms.stderr.strip() + "\n---\n" + verify.stderr.strip()).strip()
+                out["chain_ok"] = "OK" in verify.stdout
+                out["status"] = "pass" if out["chain_ok"] else "fail"
+                return out
+
+        # Si nada funcionó
+        out["detail"] = "Formato no reconocido o cadena no verificable con CA del sistema"
+        return out
 
     except Exception as e:
-        return {"status": "error", "detail": str(e)}
+        out["detail"] = str(e)
+        return out
 
 def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
     out = {
@@ -310,7 +410,5 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
         out["openssl"] = _verify_with_openssl(pem)
     except Exception as e:
         out["openssl"] = {"status": "error", "detail": str(e)}
-
-    print("DEBUG RETURN:", out)
 
     return out
