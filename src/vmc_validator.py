@@ -133,6 +133,8 @@ def _extract_logo_hash(cert: x509.Certificate):
 import subprocess
 import tempfile
 import os
+import re
+import urllib.request
 
 CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"
 
@@ -143,6 +145,7 @@ def _verify_with_openssl(vmc_bytes: bytes) -> dict:
     - Maneja PEM/DER X.509 directo
     - Intenta PKCS7 y CMS si es necesario
     - Siempre verifica la cadena con el bundle de CAs del sistema
+    - Si falla, intenta descargar el intermedio desde AIA y reintenta
     """
     out = {
         "status": "error",
@@ -187,10 +190,9 @@ def _verify_with_openssl(vmc_bytes: bytes) -> dict:
                 out["stderr"] = verify.stderr.strip()
                 out["chain_ok"] = "OK" in verify.stdout
                 out["status"] = "pass" if out["chain_ok"] else "fail"
-                return out
 
         # 2) Intentar DER X.509
-        if looks_der:
+        if looks_der and out["status"] == "error":
             out["format"] = "x509_der"
             info = subprocess.run(
                 ["openssl", "x509", "-text", "-noout", "-inform", "DER", "-in", vmc_path],
@@ -205,10 +207,9 @@ def _verify_with_openssl(vmc_bytes: bytes) -> dict:
                 out["stderr"] = verify.stderr.strip()
                 out["chain_ok"] = "OK" in verify.stdout
                 out["status"] = "pass" if out["chain_ok"] else "fail"
-                return out
 
         # 3) Intentar PKCS7 PEM
-        if is_pem_pkcs7:
+        if is_pem_pkcs7 and out["status"] == "error":
             out["format"] = "pkcs7_pem"
             extract = subprocess.run(
                 ["openssl", "pkcs7", "-in", vmc_path, "-print_certs"],
@@ -227,10 +228,9 @@ def _verify_with_openssl(vmc_bytes: bytes) -> dict:
                 out["stderr"] = verify.stderr.strip()
                 out["chain_ok"] = "OK" in verify.stdout
                 out["status"] = "pass" if out["chain_ok"] else "fail"
-                return out
 
         # 4) Intentar PKCS7 DER
-        if looks_der:
+        if looks_der and out["status"] == "error":
             out["format"] = "pkcs7_der"
             extract = subprocess.run(
                 ["openssl", "pkcs7", "-in", vmc_path, "-inform", "DER", "-print_certs"],
@@ -249,10 +249,9 @@ def _verify_with_openssl(vmc_bytes: bytes) -> dict:
                 out["stderr"] = verify.stderr.strip()
                 out["chain_ok"] = "OK" in verify.stdout
                 out["status"] = "pass" if out["chain_ok"] else "fail"
-                return out
 
         # 5) Intentar CMS DER
-        if looks_der:
+        if looks_der and out["status"] == "error":
             out["format"] = "cms_der"
             with tempfile.NamedTemporaryFile(delete=False, suffix=".pem") as cf:
                 certs_out = cf.name
@@ -274,10 +273,35 @@ def _verify_with_openssl(vmc_bytes: bytes) -> dict:
                 out["stderr"] = (cms.stderr.strip() + "\n---\n" + verify.stderr.strip()).strip()
                 out["chain_ok"] = "OK" in verify.stdout
                 out["status"] = "pass" if out["chain_ok"] else "fail"
-                return out
+
+        # --- NUEVO: si falló, intentar con AIA ---
+        if not out.get("chain_ok"):
+            try:
+                proc_aia = subprocess.run(
+                    ["openssl", "x509", "-in", vmc_path, "-noout", "-text"],
+                    capture_output=True, text=True, timeout=15
+                )
+                aia_text = proc_aia.stdout
+                match = re.search(r"CA Issuers - URI:(http[^\s]+)", aia_text)
+                if match:
+                    aia_url = match.group(1)
+                    inter_path = vmc_path + ".intermediate.pem"
+                    urllib.request.urlretrieve(aia_url, inter_path)
+                    proc_chain = subprocess.run(
+                        ["openssl", "verify", "-CAfile", CA_BUNDLE, "-untrusted", inter_path, vmc_path],
+                        capture_output=True, text=True, timeout=15
+                    )
+                    out["stdout"] = (out.get("stdout","") + "\n---\n" + proc_chain.stdout.strip()).strip()
+                    out["stderr"] = (out.get("stderr","") + "\n---\n" + proc_chain.stderr.strip()).strip()
+                    out["chain_ok"] = "OK" in proc_chain.stdout
+                    out["status"] = "pass" if out["chain_ok"] else "fail"
+                    out["detail"] = f"Intento con AIA desde {aia_url}"
+            except Exception as e:
+                out["detail"] = f"Error en validación AIA: {e}"
 
         # Si nada funcionó
-        out["detail"] = "Formato no reconocido o cadena no verificable con CA del sistema"
+        if out["status"] == "error":
+            out["detail"] = "Formato no reconocido o cadena no verificable con CA del sistema"
         return out
 
     except Exception as e:
