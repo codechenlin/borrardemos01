@@ -290,4 +290,3 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
     except Exception as e:
         out["message"] = f"Error al parsear el VMC: {e}"
         return out
-
