@@ -10,7 +10,13 @@ def _get_txt(name: str):
         return None
 
 def check_bimi_record(domain: str) -> dict:
-    result = {"exists": False, "syntax_ok": False, "raw": None, "parts": {}}
+    result = {
+        "exists": False,
+        "syntax_ok": False,
+        "raw": None,
+        "parts": {},
+        "message": ""   # 👈 siempre inicializado como string
+    }
     name = f"default._bimi.{domain}"
     raw = _get_txt(name)
     if not raw:
@@ -27,6 +33,8 @@ def check_bimi_record(domain: str) -> dict:
         result["message"] = "Campo v debe ser BIMI1"
     if not l_ok:
         result["message"] = "Campo l (logo) faltante o vacío"
+    if not result["message"]:
+        result["message"] = "Validación BIMI completada sin errores"
     return result
 
 def check_dmarc(domain: str) -> dict:
@@ -35,7 +43,8 @@ def check_dmarc(domain: str) -> dict:
         "dmarc_enforced": False,
         "dmarc_policy": None,
         "policy_ok": False,
-        "policy_message": None
+        "policy_message": "",
+        "dmarc_message": ""   # 👈 siempre string
     }
     name = f"_dmarc.{domain}"
     raw = _get_txt(name)
@@ -62,5 +71,8 @@ def check_dmarc(domain: str) -> dict:
 
     if not result["dmarc_enforced"]:
         result["dmarc_message"] = "DMARC debe estar en quarantine o reject para BIMI"
+
+    if not result["dmarc_message"]:
+        result["dmarc_message"] = "Validación DMARC completada sin errores"
 
     return result
