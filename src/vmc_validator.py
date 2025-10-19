@@ -276,7 +276,7 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
             out["message"] = "No se pudo construir la cadena hasta el emisor"
         elif out["authentic"]:
             out["message"] = "VMC autenticado con cadena y verificación de revocación"
-                else:
+        else:
             out["message"] = "VMC no autenticado por condiciones no cumplidas"
 
         # --- Añadir bloque de verificación con OpenSSL ---
