@@ -1,4 +1,5 @@
 import dns.resolver
+import re
 from src.utils import parse_kv
 
 def _get_txt(name: str):
@@ -29,7 +30,13 @@ def check_bimi_record(domain: str) -> dict:
     return result
 
 def check_dmarc(domain: str) -> dict:
-    result = {"dmarc_exists": False, "dmarc_enforced": False, "dmarc_policy": None}
+    result = {
+        "dmarc_exists": False,
+        "dmarc_enforced": False,
+        "dmarc_policy": None,
+        "policy_ok": False,
+        "policy_message": None
+    }
     name = f"_dmarc.{domain}"
     raw = _get_txt(name)
     if not raw:
@@ -41,10 +48,19 @@ def check_dmarc(domain: str) -> dict:
     for kv in raw.split(";"):
         kv = kv.strip()
         if kv.startswith("p="):
-            policy = kv.split("=", 1)[1].strip()
+            policy = kv.split("=", 1)[1].strip().lower()
             break
     result["dmarc_policy"] = policy
     result["dmarc_enforced"] = policy in ("quarantine", "reject")
+
+    # Validación estricta: solo p=reject es aceptado
+    if policy == "reject":
+        result["policy_ok"] = True
+        result["policy_message"] = "Política DMARC válida: p=reject"
+    else:
+        result["policy_message"] = f"Política DMARC inválida para BIMI: se requiere p=reject, se encontró p={policy}"
+
     if not result["dmarc_enforced"]:
         result["dmarc_message"] = "DMARC debe estar en quarantine o reject para BIMI"
+
     return result
