@@ -22,6 +22,9 @@ COPY src ./src
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
 
+# Aseguramos que los certificados estén actualizados
+RUN update-ca-certificates
+
 # Exponemos el puerto
 EXPOSE 8080
 
