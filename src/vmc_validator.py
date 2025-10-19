@@ -98,6 +98,29 @@ def _ocsp_check(leaf: x509.Certificate, issuer: x509.Certificate, ocsp_url: str)
     except Exception:
         return None, "ocsp_parse_error"
 
+def _download_issuer_and_save(leaf_cert: x509.Certificate) -> str | None:
+    """
+    Descarga el certificado del emisor desde la URL AIA y lo guarda en un archivo temporal.
+    Devuelve la ruta del archivo .crt si se pudo descargar, o None si falla.
+    """
+    issuers, _ = _get_aia_urls(leaf_cert)
+    for url in issuers:
+        try:
+            content = _download(url, TIMEOUT)
+            # Intentar cargar como DER o PEM para validar que es un cert válido
+            try:
+                issuer_cert = x509.load_der_x509_certificate(content, default_backend())
+            except Exception:
+                issuer_cert = _load_pem_cert(content)
+            # Guardar en archivo temporal
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".crt")
+            tmp.write(content)
+            tmp.close()
+            return tmp.name
+        except Exception:
+            continue
+    return None
+
 def _crl_check(leaf: x509.Certificate, issuer: x509.Certificate):
     urls = _get_crl_urls(leaf)
     if not urls:
@@ -136,17 +159,22 @@ import os
 import re
 import urllib.request
 
+# Asegúrate de tener este valor definido (ruta del bundle de raíces del sistema)
 CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"
 
-def _verify_with_openssl(vmc_bytes: bytes) -> dict:
+def _verify_with_openssl(vmc_bytes: bytes, issuer_path: str | None = None) -> dict:
     """
     Verificación robusta con OpenSSL para VMC:
     - Detecta el formato por contenido
     - Maneja PEM/DER X.509 directo
     - Intenta PKCS7 y CMS si es necesario
     - Siempre verifica la cadena con el bundle de CAs del sistema
+    - Si se proporciona issuer_path, lo usa con -untrusted
     - Si falla, intenta descargar el intermedio desde AIA y reintenta
     """
+    import re
+    import urllib.request
+
     out = {
         "status": "error",
         "format": None,
@@ -182,10 +210,11 @@ def _verify_with_openssl(vmc_bytes: bytes) -> dict:
                 capture_output=True, text=True, timeout=15
             )
             if info.returncode == 0:
-                verify = subprocess.run(
-                    ["openssl", "verify", "-CAfile", CA_BUNDLE, vmc_path],
-                    capture_output=True, text=True, timeout=15
-                )
+                cmd = ["openssl", "verify", "-CAfile", CA_BUNDLE]
+                if issuer_path:
+                    cmd.extend(["-untrusted", issuer_path])
+                cmd.append(vmc_path)
+                verify = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
                 out["stdout"] = (info.stdout[:500] + "\n---\n" + verify.stdout.strip())
                 out["stderr"] = verify.stderr.strip()
                 out["chain_ok"] = "OK" in verify.stdout
@@ -199,10 +228,11 @@ def _verify_with_openssl(vmc_bytes: bytes) -> dict:
                 capture_output=True, text=True, timeout=15
             )
             if info.returncode == 0:
-                verify = subprocess.run(
-                    ["openssl", "verify", "-CAfile", CA_BUNDLE, "-inform", "DER", vmc_path],
-                    capture_output=True, text=True, timeout=15
-                )
+                cmd = ["openssl", "verify", "-CAfile", CA_BUNDLE, "-inform", "DER"]
+                if issuer_path:
+                    cmd.extend(["-untrusted", issuer_path])
+                cmd.append(vmc_path)
+                verify = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
                 out["stdout"] = (info.stdout[:500] + "\n---\n" + verify.stdout.strip())
                 out["stderr"] = verify.stderr.strip()
                 out["chain_ok"] = "OK" in verify.stdout
@@ -220,10 +250,10 @@ def _verify_with_openssl(vmc_bytes: bytes) -> dict:
                     ["openssl", "x509", "-text", "-noout"],
                     input=extract.stdout, capture_output=True, text=True, timeout=15
                 )
-                verify = subprocess.run(
-                    ["openssl", "verify", "-CAfile", CA_BUNDLE],
-                    input=extract.stdout, capture_output=True, text=True, timeout=15
-                )
+                cmd = ["openssl", "verify", "-CAfile", CA_BUNDLE]
+                if issuer_path:
+                    cmd.extend(["-untrusted", issuer_path])
+                verify = subprocess.run(cmd, input=extract.stdout, capture_output=True, text=True, timeout=15)
                 out["stdout"] = (info.stdout[:500] + "\n---\n" + verify.stdout.strip())
                 out["stderr"] = verify.stderr.strip()
                 out["chain_ok"] = "OK" in verify.stdout
@@ -241,10 +271,10 @@ def _verify_with_openssl(vmc_bytes: bytes) -> dict:
                     ["openssl", "x509", "-text", "-noout"],
                     input=extract.stdout, capture_output=True, text=True, timeout=15
                 )
-                verify = subprocess.run(
-                    ["openssl", "verify", "-CAfile", CA_BUNDLE],
-                    input=extract.stdout, capture_output=True, text=True, timeout=15
-                )
+                cmd = ["openssl", "verify", "-CAfile", CA_BUNDLE]
+                if issuer_path:
+                    cmd.extend(["-untrusted", issuer_path])
+                verify = subprocess.run(cmd, input=extract.stdout, capture_output=True, text=True, timeout=15)
                 out["stdout"] = (info.stdout[:500] + "\n---\n" + verify.stdout.strip())
                 out["stderr"] = verify.stderr.strip()
                 out["chain_ok"] = "OK" in verify.stdout
@@ -265,17 +295,17 @@ def _verify_with_openssl(vmc_bytes: bytes) -> dict:
                     ["openssl", "x509", "-text", "-noout", "-in", certs_out],
                     capture_output=True, text=True, timeout=15
                 )
-                verify = subprocess.run(
-                    ["openssl", "verify", "-CAfile", CA_BUNDLE, certs_out],
-                    capture_output=True, text=True, timeout=15
-                )
+                cmd = ["openssl", "verify", "-CAfile", CA_BUNDLE, certs_out]
+                if issuer_path:
+                    cmd.extend(["-untrusted", issuer_path])
+                verify = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
                 out["stdout"] = (info.stdout[:500] + "\n---\n" + verify.stdout.strip())
                 out["stderr"] = (cms.stderr.strip() + "\n---\n" + verify.stderr.strip()).strip()
                 out["chain_ok"] = "OK" in verify.stdout
                 out["status"] = "pass" if out["chain_ok"] else "fail"
 
-        # --- NUEVO: si falló, intentar con AIA ---
-        if not out.get("chain_ok"):
+        # --- Si falló y NO se pasó issuer_path, intentar con AIA ---
+        if not out.get("chain_ok") and not issuer_path:
             try:
                 proc_aia = subprocess.run(
                     ["openssl", "x509", "-in", vmc_path, "-noout", "-text"],
@@ -391,7 +421,7 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
         "crl_detail": None,
         "vmc_logo_hash_present": False,
         "logo_hash_match": None,
-        "message": "",   # 👈 string vacío
+        "message": "",   # 👈 siempre string
         "retry_suggestion": None,
         "source_url": vmc_url,
         "openssl": {"status": "not_run"}
@@ -409,7 +439,7 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
 
     # Descargar el VMC
     try:
-        pem_bytes = _download(vmc_url, TIMEOUT)   # 👈 ahora sí definimos pem_bytes
+        pem_bytes = _download(vmc_url, TIMEOUT)
         out["exists"] = True
     except requests.HTTPError as e:
         out["message"] = f"No se pudo descargar el VMC desde la URL indicada (HTTP {e.response.status_code})"
@@ -429,12 +459,25 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
     with open(cert_path, "wb") as f:
         f.write(pem_bytes)
 
-    # TODO: aquí deberías obtener issuer_path y ocsp_url desde el certificado
-    issuer_path = None
-    ocsp_url = None
+    # Cargar el certificado leaf
+    try:
+        leaf_cert = _load_pem_cert(pem_bytes)
+    except Exception as e:
+        out["message"] = f"No se pudo parsear el certificado VMC: {e}"
+        return out
 
-    # Validación con OpenSSL
-    out["openssl"] = _verify_with_openssl(pem_bytes)
+    # Descargar y guardar el issuer desde AIA
+    issuer_path = _download_issuer_and_save(leaf_cert)
+
+    # Extraer URL de OCSP (si existe)
+    issuers, ocsp_urls = _get_aia_urls(leaf_cert)
+    ocsp_url = ocsp_urls[0] if ocsp_urls else None
+
+    # Validación con OpenSSL (pasando issuer si existe)
+    if issuer_path:
+        out["openssl"] = _verify_with_openssl(pem_bytes, issuer_path)
+    else:
+        out["openssl"] = _verify_with_openssl(pem_bytes)
 
     # Verificación de OIDs
     out["oids"] = check_vmc_oids(pem_bytes)
@@ -453,7 +496,7 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
     if audit:
         out.update(audit)
 
-    # Al final de la función, antes de return
+    # Mensaje final
     if not out["message"]:
         out["message"] = "Validación VMC completada sin errores"
 
