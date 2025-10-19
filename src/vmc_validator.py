@@ -340,6 +340,29 @@ def check_vmc_oids(pem_bytes: bytes) -> dict:
 
     return out
 
+def check_ocsp_live(cert_path: str, issuer_path: str, ocsp_url: str) -> dict:
+    out = {
+        "ocsp_status": None,
+        "message": None
+    }
+
+    try:
+        proc = subprocess.run([
+            "openssl", "ocsp",
+            "-issuer", issuer_path,
+            "-cert", cert_path,
+            "-url", ocsp_url,
+            "-noverify"
+        ], capture_output=True, text=True, timeout=15)
+
+        out["ocsp_status"] = "good" if "good" in proc.stdout else "revoked" if "revoked" in proc.stdout else "unknown"
+        out["message"] = proc.stdout.strip()
+
+    except Exception as e:
+        out["message"] = f"Error OCSP: {e}"
+
+    return out
+
 def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
     out = {
         "exists": False,
@@ -364,12 +387,22 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
     }
     
     # ... aquí tu lógica para descargar el VMC y cargarlo en pem_bytes ...
+    # Supongamos que guardas el VMC en disco como cert_path
+    # y que también obtienes issuer_path y ocsp_url
 
     # Validación con OpenSSL
     out["openssl"] = _verify_with_openssl(pem_bytes)
 
-    # 👇 Añadido: verificación de OIDs
+    # Verificación de OIDs
     out["oids"] = check_vmc_oids(pem_bytes)
+
+    # 👇 Añadido: Prueba de revocación activa vía OCSP
+    try:
+        out["ocsp_live"] = check_ocsp_live(cert_path, issuer_path, ocsp_url)
+    except Exception as e:
+        out["ocsp_live"] = {"error": f"Error al ejecutar OCSP en vivo: {e}"}
+
+    return out
     
     if not vmc_url:
         out["message"] = "El dominio no incluye VMC (no hay campo a= en el registro BIMI)"
