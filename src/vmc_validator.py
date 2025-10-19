@@ -213,3 +213,6 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
         out["exists"] = True
         out["subject"] = leaf.subject.rfc4514_string()
         out["issuer"] = leaf.issuer.rfc4514_string()
+        out["valid_from"] = leaf.not_valid_before.isoformat()
+        out["valid_to"] = leaf.not_valid_after.isoformat()
+        out["valid_now"] = _validate_times
