@@ -285,14 +285,13 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
     vmc_logo_hash_present = False
     logo_hash_match = False
 
-        out["vmc"] = {
+            # --- BLOQUE DE COMPATIBILIDAD VMC (siempre rellenado) ---
+    out["vmc"] = {
         "exists": bool(vmc_exists),
         "authentic": bool(vmc_authentic),
         "chain_ok": bool(vmc_chain_ok),
         "valid_now": bool(vmc_valid_now),
-        # Forzamos a boolean en lugar de None
         "revocation_ok": bool(revocation_ok) if revocation_ok is not None else False,
-        # Strings nunca deben ser None
         "ocsp_status": str(ocsp_status) if ocsp_status is not None else "",
         "crl_status": str(crl_status) if crl_status is not None else "",
         "vmc_logo_hash_present": bool(vmc_logo_hash_present),
