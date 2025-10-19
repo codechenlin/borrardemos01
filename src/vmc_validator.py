@@ -288,4 +288,6 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
     except Exception as e:
         out["openssl"] = {"status": "error", "detail": str(e)}
 
+    print("DEBUG RETURN:", out)
+
     return out
