@@ -391,7 +391,7 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
         "crl_detail": None,
         "vmc_logo_hash_present": False,
         "logo_hash_match": None,
-        "message": None,
+        "message": "",   # 👈 string vacío
         "retry_suggestion": None,
         "source_url": vmc_url,
         "openssl": {"status": "not_run"}
@@ -452,6 +452,10 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
     audit = compare_validators(out, out["openssl"])
     if audit:
         out.update(audit)
+
+    # Al final de la función, antes de return
+    if not out["message"]:
+        out["message"] = "Validación VMC completada sin errores"
 
     return out
     
