@@ -266,7 +266,7 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
 
         out["authentic"] = (out["valid_now"] and out["chain_ok"] and out["revocation_ok"] is True)
 
-                if out["revocation_ok"] is None:
+        if out["revocation_ok"] is None:
             out["message"] = "Revocación indeterminada por indisponibilidad OCSP/CRL de la CA"
         elif out["revocation_ok"] is False:
             out["message"] = "Certificado VMC marcado como revocado por OCSP/CRL"
