@@ -215,7 +215,7 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
         out["issuer"] = leaf.issuer.rfc4514_string()
         out["valid_from"] = leaf.not_valid_before.isoformat()
         out["valid_to"] = leaf.not_valid_after.isoformat()
-                out["valid_now"] = _validate_times(leaf)
+        out["valid_now"] = _validate_times(leaf)
 
         chain, ocsp_urls, has_issuer = _try_build_chain(leaf)
         out["chain_ok"] = has_issuer
