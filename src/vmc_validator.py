@@ -363,6 +363,17 @@ def check_ocsp_live(cert_path: str, issuer_path: str, ocsp_url: str) -> dict:
 
     return out
 
+def compare_validators(python_result: dict, openssl_result: dict) -> dict:
+    """
+    Compara los resultados de validación de Python y OpenSSL.
+    Si difieren en chain_ok, devuelve una nota de auditoría.
+    """
+    if python_result.get("chain_ok") != openssl_result.get("chain_ok"):
+        return {
+            "audit_note": "Inconsistencia detectada entre validación Python y OpenSSL"
+        }
+    return {}
+
 def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
     out = {
         "exists": False,
@@ -401,6 +412,11 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
         out["ocsp_live"] = check_ocsp_live(cert_path, issuer_path, ocsp_url)
     except Exception as e:
         out["ocsp_live"] = {"error": f"Error al ejecutar OCSP en vivo: {e}"}
+
+    # Auditoría cruzada: comparar Python vs OpenSSL
+    audit = compare_validators(out, out["openssl"])
+    if audit:
+        out.update(audit)
 
     return out
     
