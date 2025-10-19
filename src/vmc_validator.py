@@ -394,12 +394,44 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
         "message": None,
         "retry_suggestion": None,
         "source_url": vmc_url,
-        "openssl": {"status": "not_run"}   # 👈 añadido desde el inicio
+        "openssl": {"status": "not_run"}
     }
-    
-    # ... aquí tu lógica para descargar el VMC y cargarlo en pem_bytes ...
-    # Supongamos que guardas el VMC en disco como cert_path
-    # y que también obtienes issuer_path y ocsp_url
+
+    # Validaciones iniciales de URL
+    if not vmc_url:
+        out["message"] = "El dominio no incluye VMC (no hay campo a= en el registro BIMI)"
+        return out
+
+    parsed = urlparse(vmc_url)
+    if parsed.scheme != "https":
+        out["message"] = "El certificado VMC debe servirse por HTTPS"
+        return out
+
+    # Descargar el VMC
+    try:
+        pem_bytes = _download(vmc_url, TIMEOUT)   # 👈 ahora sí definimos pem_bytes
+        out["exists"] = True
+    except requests.HTTPError as e:
+        out["message"] = f"No se pudo descargar el VMC desde la URL indicada (HTTP {e.response.status_code})"
+        return out
+    except requests.Timeout:
+        out["message"] = "No se pudo descargar el VMC desde la URL indicada (timeout)"
+        return out
+    except requests.RequestException:
+        out["message"] = "No se pudo descargar el VMC desde la URL indicada (error de red o bloqueado)"
+        return out
+    except Exception as e:
+        out["message"] = f"No se pudo descargar el VMC desde la URL indicada (error: {e})"
+        return out
+
+    # Guardar en archivo temporal para OCSP/CRL
+    cert_path = "/tmp/vmc_cert.pem"
+    with open(cert_path, "wb") as f:
+        f.write(pem_bytes)
+
+    # TODO: aquí deberías obtener issuer_path y ocsp_url desde el certificado
+    issuer_path = None
+    ocsp_url = None
 
     # Validación con OpenSSL
     out["openssl"] = _verify_with_openssl(pem_bytes)
@@ -407,9 +439,12 @@ def check_vmc(vmc_url: str | None, svg_url: str | None) -> dict:
     # Verificación de OIDs
     out["oids"] = check_vmc_oids(pem_bytes)
 
-    # 👇 Añadido: Prueba de revocación activa vía OCSP
+    # Prueba de revocación activa vía OCSP
     try:
-        out["ocsp_live"] = check_ocsp_live(cert_path, issuer_path, ocsp_url)
+        if issuer_path and ocsp_url:
+            out["ocsp_live"] = check_ocsp_live(cert_path, issuer_path, ocsp_url)
+        else:
+            out["ocsp_live"] = {"warning": "No se pudo determinar issuer u OCSP URL"}
     except Exception as e:
         out["ocsp_live"] = {"error": f"Error al ejecutar OCSP en vivo: {e}"}
 
