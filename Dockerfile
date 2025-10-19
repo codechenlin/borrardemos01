@@ -8,6 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
+# Aseguramos que los certificados raíz estén actualizados
+RUN update-ca-certificates
+
 # Definimos directorio de trabajo
 WORKDIR /app
 
@@ -21,9 +24,6 @@ COPY src ./src
 # Variables de entorno
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
-
-# Aseguramos que los certificados estén actualizados
-RUN update-ca-certificates
 
 # Exponemos el puerto
 EXPOSE 8080
